@@ -28,7 +28,7 @@ app.get('/ping', (req, res) => {
     res.status(200).send('OK');
 });
 
-// 管理パネル用リアルタイムデータAPI（1秒ごとに自動取得される用）
+// 管理パネル用リアルタイムデータAPI
 app.get('/api/stats', (req, res) => {
     if (req.query.pin !== ADMIN_PIN) {
         return res.status(401).json({ error: 'Unauthorized' });
@@ -272,7 +272,7 @@ app.post('/admin', (req, res) => {
                     }
                 }
                 updateStats();
-                setInterval(updateStats, 1000); // 1秒ごとに自動更新
+                setInterval(updateStats, 1000);
             </script>
         </body>
         </html>
@@ -295,14 +295,24 @@ const client = new Client({
     }
 });
 
-// スラッシュコマンド定義
+// スラッシュコマンド定義（ここで話す にメンション不要・チャンネル指定オプション追加）
 const commands = [
     new SlashCommandBuilder()
         .setName('ここで話さない')
         .setDescription('このチャンネルを自動返信対象から外すんね'),
     new SlashCommandBuilder()
         .setName('ここで話す')
-        .setDescription('このチャンネルをメンションなしで自動返信チャンネルにするぜ☆')
+        .setDescription('指定したチャンネルで自動返信するぜ☆')
+        .addBooleanOption(option =>
+            option.setName('メンションなし')
+                .setDescription('メンションしなくても自動返信するかどうか (true/false)')
+                .setRequired(false)
+        )
+        .addChannelOption(option =>
+            option.setName('チャンネル')
+                .setDescription('対象のチャンネル（省略した場合は今のチャンネル）')
+                .setRequired(false)
+        )
         .addIntegerOption(option =>
             option.setName('確率')
                 .setDescription('反応確率（1〜100%、省略時は100%）')
@@ -401,9 +411,16 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply('了解！このチャンネルではもう勝手に話さないようにするんね〜');
     } 
     else if (commandName === 'ここで話す') {
+        const targetChannel = interaction.options.getChannel('チャンネル') || interaction.channel;
+        const noMention = interaction.options.getBoolean('メンションなし') ?? true; // デフォルトtrue
         const prob = interaction.options.getInteger('確率') ?? 100;
-        channelSettings.set(channelId, { enabled: true, probability: prob });
-        await interaction.reply(`よっしゃ！このチャンネルでメンションなしでも自動返信するぜ☆（反応確率: **${prob}%**）`);
+
+        channelSettings.set(targetChannel.id, { 
+            enabled: noMention, 
+            probability: prob 
+        });
+
+        await interaction.reply(`よっしゃ！ <#${targetChannel.id}> で自動返信を設定したぜ☆（メンションなし反応: **${noMention ? 'ON' : 'OFF'}** / 反応確率: **${prob}%**）`);
     } 
     else if (commandName === '確率変えよー') {
         const prob = interaction.options.getInteger('確率');
