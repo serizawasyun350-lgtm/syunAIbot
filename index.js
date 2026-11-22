@@ -24,7 +24,7 @@ let botStatusMode = 'normal'; // 'normal' (通常), 'maintenance' (点検中), '
 let currentActivityText = 'ちくわを食べながら待機中☆';
 let currentOnlineStatus = 'online'; // 'online', 'idle', 'dnd', 'invisible'
 
-// リアルタイムコンソールログを保持する配列（最新100件）
+// リアルタイムコンソールログ
 const consoleLogs = [];
 const originalLog = console.log;
 const originalError = console.error;
@@ -46,12 +46,12 @@ console.error = (...args) => {
     captureLog('ERROR', args);
 };
 
-// UptimeRobotなどの監視ツール用
+// UptimeRobot用
 app.get('/ping', (req, res) => {
     res.status(200).send('OK');
 });
 
-// 管理パネル用リアルタイムデータAPI
+// 統計API
 app.get('/api/stats', (req, res) => {
     if (req.query.pin !== ADMIN_PIN) {
         return res.status(401).json({ error: 'Unauthorized' });
@@ -109,7 +109,7 @@ app.get('/api/stats', (req, res) => {
     });
 });
 
-// 管理パネル：ログイン画面（PIN: 1472）
+// ログイン画面
 app.get('/', (req, res) => {
     res.send(`
         <!DOCTYPE html>
@@ -140,7 +140,7 @@ app.get('/', (req, res) => {
     `);
 });
 
-// 管理パネル本体（1秒ごとに自動更新＆コンソールログ表示付き）
+// 管理パネル本体
 app.post('/admin', (req, res) => {
     const { pin, newMode, newActivity, newOnlineStatus, systemAction } = req.body;
 
@@ -157,18 +157,18 @@ app.post('/admin', (req, res) => {
         `);
     }
 
-    // 完全停止・再起動の処理
+    // 再起動・停止処理の改善（確実にプロセスを落としてRenderに自動復旧させる）
     if (systemAction === 'shutdown') {
-        console.log('⚠️ 管理パネルからBotの完全停止（プロセス終了）が実行されました。');
-        res.send(`<!DOCTYPE html><html lang="ja"><body style="background:#1e1e1e;color:#ff5555;text-align:center;padding-top:100px;font-family:sans-serif;"><h1>🔴 Botを完全に停止しました。</h1><p>再起動するにはRenderダッシュボードからManual Deployを行ってください。</p><a href="/" style="color:#00FF7F;">ログイン画面へ</a></body></html>`);
-        setTimeout(() => process.exit(0), 1000);
+        console.log('⚠️ 管理パネルから完全停止が実行されました。');
+        res.send(`<!DOCTYPE html><html lang="ja"><body style="background:#1e1e1e;color:#ff5555;text-align:center;padding-top:100px;font-family:sans-serif;"><h1>🔴 Botを完全に停止しました。</h1><a href="/" style="color:#00FF7F;">ログイン画面へ</a></body></html>`);
+        setTimeout(() => process.exit(0), 500);
         return;
     }
 
     if (systemAction === 'restart') {
-        console.log('🔄 管理パネルからBotの再起動が実行されました。');
-        res.send(`<!DOCTYPE html><html lang="ja"><body style="background:#1e1e1e;color:#FFD700;text-align:center;padding-top:100px;font-family:sans-serif;"><h1>🔄 Botを再起動しています...</h1><p>数秒後にページを再読み込みしてください。</p><a href="/" style="color:#00FF7F;">ログイン画面へ</a></body></html>`);
-        setTimeout(() => process.exit(1), 1000);
+        console.log('🔄 管理パネルから再起動が実行されました。');
+        res.send(`<!DOCTYPE html><html lang="ja"><body style="background:#1e1e1e;color:#FFD700;text-align:center;padding-top:100px;font-family:sans-serif;"><h1>🔄 Botを再起動しています...</h1><p>数秒後に更新してください。</p><a href="/" style="color:#00FF7F;">ログイン画面へ</a></body></html>`);
+        setTimeout(() => process.exit(0), 500); // 0にすることでRender側が確実に再起動を検知しやすくなります
         return;
     }
 
@@ -176,14 +176,19 @@ app.post('/admin', (req, res) => {
         botStatusMode = newMode;
     }
 
-    if (newActivity && newActivity.trim().length > 0 && client.user) {
+    // ステータス変更を確実に適用する処理
+    if (newActivity && newActivity.trim().length > 0) {
         currentActivityText = newActivity.trim();
-        client.user.setActivity(currentActivityText, { type: ActivityType.Playing });
+    }
+    if (newOnlineStatus && ['online', 'idle', 'dnd', 'invisible'].includes(newOnlineStatus)) {
+        currentOnlineStatus = newOnlineStatus;
     }
 
-    if (newOnlineStatus && ['online', 'idle', 'dnd', 'invisible'].includes(newOnlineStatus) && client.user) {
-        currentOnlineStatus = newOnlineStatus;
-        client.user.setStatus(currentOnlineStatus);
+    if (client.user) {
+        client.user.setPresence({
+            activities: [{ name: currentActivityText, type: ActivityType.Playing }],
+            status: currentOnlineStatus
+        });
     }
 
     res.send(`
@@ -442,6 +447,7 @@ client.once('ready', async () => {
     console.log(`${client.user.tag} がスマホモードでログインしたぜ！`);
     console.log(`登録メッセージ総数: ${messages.length}個 / 登録コマンド数: ${commands.length}個`);
 
+    // 起動時の初期ステータス＆スマホマーク設定を確実に適用
     client.user.setPresence({
         activities: [{ name: currentActivityText, type: ActivityType.Playing }],
         status: currentOnlineStatus
