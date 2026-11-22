@@ -15,6 +15,7 @@ let stats = {
     totalSentMessages: 0,
     totalReceivedMessages: 0,
     totalCommandsExecuted: 0,
+    totalAuthCount: 0,
     startTime: Date.now()
 };
 
@@ -22,6 +23,28 @@ const channelSettings = new Map();
 let botStatusMode = 'normal'; // 'normal' (通常), 'maintenance' (点検中), 'stopped' (停止中)
 let currentActivityText = 'ちくわを食べながら待機中☆';
 let currentOnlineStatus = 'online'; // 'online', 'idle', 'dnd', 'invisible'
+
+// リアルタイムコンソールログを保持する配列（最新100件）
+const consoleLogs = [];
+const originalLog = console.log;
+const originalError = console.error;
+
+function captureLog(type, args) {
+    const time = new Date().toLocaleTimeString('ja-JP');
+    const text = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ');
+    consoleLogs.unshift(`[${time}] [${type}] ${text}`);
+    if (consoleLogs.length > 100) consoleLogs.pop();
+}
+
+console.log = (...args) => {
+    originalLog(...args);
+    captureLog('INFO', args);
+};
+
+console.error = (...args) => {
+    originalError(...args);
+    captureLog('ERROR', args);
+};
 
 // UptimeRobotなどの監視ツール用
 app.get('/ping', (req, res) => {
@@ -68,6 +91,8 @@ app.get('/api/stats', (req, res) => {
         totalSentMessages: stats.totalSentMessages,
         totalReceivedMessages: stats.totalReceivedMessages,
         totalCommandsExecuted: stats.totalCommandsExecuted,
+        totalAuthCount: stats.totalAuthCount,
+        commandCount: commands.length,
         guildCount,
         userCount,
         messagePoolSize: messages.length,
@@ -79,7 +104,8 @@ app.get('/api/stats', (req, res) => {
         cpuSystemSec: (cpuUsage.system / 1000000).toFixed(2),
         activeChannelsCount: channelSettings.size,
         nodeVersion: process.version,
-        platform: `${os.type()} (${os.arch()})`
+        platform: `${os.type()} (${os.arch()})`,
+        logs: consoleLogs.slice(0, 30).join('\n')
     });
 });
 
@@ -114,9 +140,9 @@ app.get('/', (req, res) => {
     `);
 });
 
-// 管理パネル本体（1秒ごとに自動更新）
+// 管理パネル本体（1秒ごとに自動更新＆コンソールログ表示付き）
 app.post('/admin', (req, res) => {
-    const { pin, newMode, newActivity, newOnlineStatus } = req.body;
+    const { pin, newMode, newActivity, newOnlineStatus, systemAction } = req.body;
 
     if (pin !== ADMIN_PIN) {
         return res.status(401).send(`
@@ -129,6 +155,21 @@ app.post('/admin', (req, res) => {
             </body>
             </html>
         `);
+    }
+
+    // 完全停止・再起動の処理
+    if (systemAction === 'shutdown') {
+        console.log('⚠️ 管理パネルからBotの完全停止（プロセス終了）が実行されました。');
+        res.send(`<!DOCTYPE html><html lang="ja"><body style="background:#1e1e1e;color:#ff5555;text-align:center;padding-top:100px;font-family:sans-serif;"><h1>🔴 Botを完全に停止しました。</h1><p>再起動するにはRenderダッシュボードからManual Deployを行ってください。</p><a href="/" style="color:#00FF7F;">ログイン画面へ</a></body></html>`);
+        setTimeout(() => process.exit(0), 1000);
+        return;
+    }
+
+    if (systemAction === 'restart') {
+        console.log('🔄 管理パネルからBotの再起動が実行されました。');
+        res.send(`<!DOCTYPE html><html lang="ja"><body style="background:#1e1e1e;color:#FFD700;text-align:center;padding-top:100px;font-family:sans-serif;"><h1>🔄 Botを再起動しています...</h1><p>数秒後にページを再読み込みしてください。</p><a href="/" style="color:#00FF7F;">ログイン画面へ</a></body></html>`);
+        setTimeout(() => process.exit(1), 1000);
+        return;
     }
 
     if (newMode && ['normal', 'maintenance', 'stopped'].includes(newMode)) {
@@ -153,12 +194,12 @@ app.post('/admin', (req, res) => {
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>しゅんAIBOT 管理パネル</title>
             <style>
-                body { font-family: sans-serif; background: #1e1e1e; color: #fff; padding: 20px; max-width: 700px; margin: 0 auto; }
+                body { font-family: sans-serif; background: #1e1e1e; color: #fff; padding: 20px; max-width: 750px; margin: 0 auto; }
                 .card { background: #2c2f33; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
                 h1 { color: #00FF7F; font-size: 22px; display: flex; align-items: center; justify-content: space-between; }
                 h3 { margin-top: 0; color: #00FF7F; border-bottom: 1px solid #444; padding-bottom: 8px; }
                 .live-badge { font-size: 12px; background: #00FF7F; color: #000; padding: 4px 8px; border-radius: 12px; font-weight: bold; }
-                .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; }
+                .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
                 .stat { font-size: 14px; background: #23272a; padding: 10px; border-radius: 6px; }
                 .stat strong { color: #aaa; display: block; font-size: 12px; margin-bottom: 3px; }
                 .stat span { font-size: 15px; font-weight: bold; color: #fff; }
@@ -169,6 +210,7 @@ app.post('/admin', (req, res) => {
                 .btn-maint { background: #FFD700; color: #000; }
                 .btn-stop { background: #FF4500; color: #fff; }
                 .btn-blue { background: #5865F2; color: #fff; }
+                .console-box { background: #000; color: #00FF7F; font-family: monospace; padding: 12px; border-radius: 6px; height: 180px; overflow-y: scroll; font-size: 12px; white-space: pre-wrap; }
             </style>
         </head>
         <body>
@@ -185,44 +227,51 @@ app.post('/admin', (req, res) => {
                     <div class="stat"><strong>表示ステータス</strong><span id="activityText">読込中...</span></div>
                     <div class="stat"><strong>応答速度 (Ping)</strong><span><span id="ping">0</span> ms</span></div>
                     <div class="stat"><strong>連続稼働時間</strong><span id="uptimeText">読込中...</span></div>
+                    <div class="stat"><strong>Bot認証（導入）回数</strong><span><span id="totalAuthCount">0</span> 回</span></div>
+                    <div class="stat"><strong>スラッシュコマンド数</strong><span><span id="commandCount">0</span> 個</span></div>
                     <div class="stat"><strong>導入サーバー / 総ユーザー</strong><span><span id="guildCount">0</span> 鯖 / <span id="userCount">0</span> 人</span></div>
                     <div class="stat"><strong>総送信メッセージ数</strong><span><span id="totalSentMessages">0</span> 件</span></div>
                     <div class="stat"><strong>総受信メッセージ数</strong><span><span id="totalReceivedMessages">0</span> 件</span></div>
                     <div class="stat"><strong>コマンド実行回数</strong><span><span id="totalCommandsExecuted">0</span> 回</span></div>
                     <div class="stat"><strong>自動返信ONチャンネル数</strong><span><span id="activeChannelsCount">0</span> 個</span></div>
-                    <div class="stat"><strong>登録セリフ総数</strong><span><span id="messagePoolSize">0</span> パターン</span></div>
                 </div>
             </div>
 
             <div class="card">
-                <h3>💻 サーバーリソース詳細 (Render)</h3>
-                <div class="grid">
-                    <div class="stat"><strong>RAM使用量 (RSS)</strong><span><span id="rssMB">0</span> MB</span></div>
-                    <div class="stat"><strong>ヒープ使用 / 確保</strong><span><span id="heapUsedMB">0</span> / <span id="heapTotalMB">0</span> MB</span></div>
-                    <div class="stat"><strong>外部メモリ (External)</strong><span><span id="externalMB">0</span> MB</span></div>
-                    <div class="stat"><strong>CPU時間 (User / Sys)</strong><span><span id="cpuUserSec">0</span>s / <span id="cpuSystemSec">0</span>s</span></div>
-                    <div class="stat"><strong>Node.js バージョン</strong><span id="nodeVersion">-</span></div>
-                    <div class="stat"><strong>実行環境 OS</strong><span id="platform">-</span></div>
-                </div>
+                <h3>💻 リアルタイムコンソールログ</h3>
+                <div id="logs" class="console-box">ログを読み込んでいます...</div>
             </div>
 
             <div class="card">
-                <h3>⚙️ Botモード遠隔切り替え</h3>
-                <div class="btn-group">
+                <h3>⚙️ Botコントロール & 電源管理</h3>
+                <div class="btn-group" style="margin-bottom: 15px;">
                     <form action="/admin" method="POST" style="flex:1;">
                         <input type="hidden" name="pin" value="${ADMIN_PIN}">
                         <input type="hidden" name="newMode" value="normal">
-                        <button type="submit" class="btn-normal">🟢 通常にする</button>
+                        <button type="submit" class="btn-normal">🟢 通常モード</button>
                     </form>
                     <form action="/admin" method="POST" style="flex:1;">
                         <input type="hidden" name="pin" value="${ADMIN_PIN}">
                         <input type="hidden" name="newMode" value="maintenance">
-                        <button type="submit" class="btn-maint">🟡 点検中にする</button>
+                        <button type="submit" class="btn-maint">🟡 点検中</button>
                     </form>
                     <form action="/admin" method="POST" style="flex:1;">
                         <input type="hidden" name="pin" value="${ADMIN_PIN}">
                         <input type="hidden" name="newMode" value="stopped">
-                        <button type="submit" class="btn-stop">🔴 停止にする</button>
+                        <button type="submit" class="btn-stop">🔴 一時停止</button>
+                    </form>
+                </div>
+
+                <div class="btn-group">
+                    <form action="/admin" method="POST" style="flex:1;" onsubmit="return confirm('本当にBotを再起動しますか？');">
+                        <input type="hidden" name="pin" value="${ADMIN_PIN}">
+                        <input type="hidden" name="systemAction" value="restart">
+                        <button type="submit" class="btn-blue">🔄 Bot再起動</button>
+                    </form>
+                    <form action="/admin" method="POST" style="flex:1;" onsubmit="return confirm('本当にBotを完全に停止しますか？');">
+                        <input type="hidden" name="pin" value="${ADMIN_PIN}">
+                        <input type="hidden" name="systemAction" value="shutdown">
+                        <button type="submit" class="btn-stop">🔴 完全シャットダウン</button>
                     </form>
                 </div>
 
@@ -265,7 +314,11 @@ app.post('/admin', (req, res) => {
                         
                         for (const key in data) {
                             const el = document.getElementById(key);
-                            if (el) el.textContent = data[key];
+                            if (el && key !== 'logs') el.textContent = data[key];
+                        }
+                        const logBox = document.getElementById('logs');
+                        if (logBox && data.logs) {
+                            logBox.textContent = data.logs;
                         }
                     } catch (e) {
                         console.error('更新エラー:', e);
@@ -295,7 +348,7 @@ const client = new Client({
     }
 });
 
-// スラッシュコマンド定義（すべてのコマンドに管理者権限（Administrator）を付与）
+// スラッシュコマンド定義
 const commands = [
     new SlashCommandBuilder()
         .setName('ここで話さない')
@@ -387,7 +440,7 @@ const commands = [
 
 client.once('ready', async () => {
     console.log(`${client.user.tag} がスマホモードでログインしたぜ！`);
-    console.log(`登録メッセージ総数: ${messages.length}個`);
+    console.log(`登録メッセージ総数: ${messages.length}個 / 登録コマンド数: ${commands.length}個`);
 
     client.user.setPresence({
         activities: [{ name: currentActivityText, type: ActivityType.Playing }],
@@ -404,6 +457,11 @@ client.once('ready', async () => {
     } catch (error) {
         console.error('コマンド登録エラー:', error);
     }
+});
+
+client.on('guildCreate', guild => {
+    stats.totalAuthCount++;
+    console.log(`新しいサーバーに導入されました: ${guild.name} (累計認証回数: ${stats.totalAuthCount})`);
 });
 
 client.on('interactionCreate', async interaction => {
@@ -467,14 +525,15 @@ client.on('interactionCreate', async interaction => {
                 { name: '🌐 動作モード', value: `\`${botStatusMode}\``, inline: true },
                 { name: '📶 応答速度 (Ping)', value: `${client.ws.ping} ms`, inline: true },
                 { name: '⏱️ 連続稼働時間', value: `${hours}時間 ${mins}分`, inline: true },
-                { name: '🏰 導入サーバー数', value: `${guildCount} サーバー`, inline: true },
+                { name: '🔗 累計Bot認証回数', value: `${stats.totalAuthCount} 回`, inline: true },
+                { name: '⚡ コマンド数', value: `${commands.length} 個`, inline: true },
+                { name: '🏰 現在の導入サーバー数', value: `${guildCount} サーバー`, inline: true },
                 { name: '👥 合計ユーザー数', value: `${userCount} 人`, inline: true },
                 { name: '📝 登録セリフ数', value: `${messages.length} 個`, inline: true },
                 { name: '💬 総送信数', value: `${stats.totalSentMessages} 件`, inline: true },
                 { name: '📩 総受信数', value: `${stats.totalReceivedMessages} 件`, inline: true },
                 { name: '⚡ コマンド実行数', value: `${stats.totalCommandsExecuted} 回`, inline: true },
                 { name: '💻 RAM使用量 (RSS)', value: `${ramUsageMB} MB`, inline: true },
-                { name: '🧠 ヒープメモリ', value: `${heapUsedMB} / ${heapTotalMB} MB`, inline: true },
                 { name: '🖥️ 実行環境', value: `Node ${process.version}`, inline: true },
                 { name: '🎮 表示ステータス', value: `\`${currentActivityText}\``, inline: false },
                 { name: '⚙️ 自動返信有効チャンネル', value: activeChannels.length > 0 ? activeChannels.join('\n') : 'なし（メンションか返信で反応するよ）' }
