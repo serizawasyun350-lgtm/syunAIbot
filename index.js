@@ -5,23 +5,19 @@ const messages = require('./messages');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// フォーム送信データを読み取る設定
 app.use(express.urlencoded({ extended: true }));
 
-// 管理パネルのPINコード設定
 const ADMIN_PIN = '1472';
 
-// Bot全体の統計データを保持する変数
 let stats = {
     totalSentMessages: 0,
     startTime: Date.now()
 };
 
-// チャンネルごとの設定 & Bot全体の設定
 const channelSettings = new Map();
 let botStatusMode = 'normal'; // 'normal' (通常), 'maintenance' (点検中), 'stopped' (停止中)
 
-// UptimeRobotなどの監視ツール用（PINなしで軽量応答し、スリープを防ぐ）
+// UptimeRobotなどの監視ツール用
 app.get('/ping', (req, res) => {
     res.status(200).send('OK');
 });
@@ -57,11 +53,10 @@ app.get('/', (req, res) => {
     `);
 });
 
-// Web管理パネル本体（PIN認証後＆モード変更処理）
+// Web管理パネル本体
 app.post('/admin', (req, res) => {
     const { pin, newMode } = req.body;
 
-    // PINコードが違う場合は弾く
     if (pin !== ADMIN_PIN) {
         return res.status(401).send(`
             <!DOCTYPE html>
@@ -75,7 +70,6 @@ app.post('/admin', (req, res) => {
         `);
     }
 
-    // パネル上のボタンからモード変更が送られた場合
     if (newMode && ['normal', 'maintenance', 'stopped'].includes(newMode)) {
         botStatusMode = newMode;
     }
@@ -173,7 +167,6 @@ const client = new Client({
     }
 });
 
-// スラッシュコマンドの定義
 const commands = [
     new SlashCommandBuilder()
         .setName('ここで話さない')
@@ -301,17 +294,36 @@ client.on('interactionCreate', async interaction => {
 client.on('messageCreate', async message => {
     if (message.author.bot || !message.guild) return;
 
+    // 停止中の場合はすべて無視
     if (botStatusMode === 'stopped') return;
-    if (botStatusMode === 'maintenance' && !message.mentions.has(client.user)) return;
 
+    // メンションされたか判定
     const isMentioned = message.mentions.has(client.user);
-    const setting = channelSettings.get(message.channel.id);
 
+    // Botのメッセージに対する「返信（リプライ）」か判定
+    let isReplyToBot = false;
+    if (message.reference && message.reference.messageId) {
+        try {
+            const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
+            if (repliedMessage.author.id === client.user.id) {
+                isReplyToBot = true;
+            }
+        } catch (err) {
+            // 元メッセージが削除されている場合などは無視
+        }
+    }
+
+    // 点検中の場合は、メンションかBotへの返信のみ応答
+    if (botStatusMode === 'maintenance' && !isMentioned && !isReplyToBot) return;
+
+    const setting = channelSettings.get(message.channel.id);
     let shouldReply = false;
 
-    if (isMentioned) {
+    if (isMentioned || isReplyToBot) {
+        // メンションされた場合、またはBotに返信した場合は必ず応答
         shouldReply = true;
     } else if (setting && setting.enabled) {
+        // 自動返信チャンネルの場合、確率で抽選
         const roll = Math.random() * 100;
         if (roll < setting.probability) {
             shouldReply = true;
