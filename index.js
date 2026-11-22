@@ -1,5 +1,6 @@
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActivityType } = require('discord.js');
 const express = require('express');
+const os = require('os');
 const messages = require('./messages');
 
 const app = express();
@@ -9,20 +10,80 @@ app.use(express.urlencoded({ extended: true }));
 
 const ADMIN_PIN = '1472';
 
+// 統計データ管理
 let stats = {
     totalSentMessages: 0,
+    totalReceivedMessages: 0,
+    totalCommandsExecuted: 0,
     startTime: Date.now()
 };
 
 const channelSettings = new Map();
 let botStatusMode = 'normal'; // 'normal' (通常), 'maintenance' (点検中), 'stopped' (停止中)
+let currentActivityText = 'ちくわを食べながら待機中☆';
+let currentOnlineStatus = 'online'; // 'online', 'idle', 'dnd', 'invisible'
 
 // UptimeRobotなどの監視ツール用
 app.get('/ping', (req, res) => {
     res.status(200).send('OK');
 });
 
-// Web管理パネル：ログイン画面（PIN入力）
+// 管理パネル用リアルタイムデータAPI（1秒ごとに自動取得される用）
+app.get('/api/stats', (req, res) => {
+    if (req.query.pin !== ADMIN_PIN) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const memoryUsage = process.memoryUsage();
+    const cpuUsage = process.cpuUsage();
+    const uptimeSeconds = Math.floor((Date.now() - stats.startTime) / 1000);
+    const days = Math.floor(uptimeSeconds / 86400);
+    const hours = Math.floor((uptimeSeconds % 86400) / 3600);
+    const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+    const seconds = uptimeSeconds % 60;
+
+    const ping = client.ws ? client.ws.ping : 0;
+    const guildCount = client.guilds ? client.guilds.cache.size : 0;
+    const userCount = client.guilds
+        ? client.guilds.cache.reduce((acc, g) => acc + g.memberCount, 0)
+        : 0;
+
+    let modeLabel = '🟢 通常稼働中 (normal)';
+    if (botStatusMode === 'maintenance') modeLabel = '🟡 点検中 (maintenance)';
+    if (botStatusMode === 'stopped') modeLabel = '🔴 完全停止中 (stopped)';
+
+    const statusNameMap = {
+        online: '🟢 オンライン',
+        idle: '🌙 退席中',
+        dnd: '⛔ 取り込み中',
+        invisible: '⚫ オフライン表示'
+    };
+
+    res.json({
+        modeLabel,
+        onlineStatusLabel: statusNameMap[currentOnlineStatus] || '🟢 オンライン',
+        activityText: currentActivityText,
+        ping,
+        uptimeText: `${days}日 ${hours}時間 ${minutes}分 ${seconds}秒`,
+        totalSentMessages: stats.totalSentMessages,
+        totalReceivedMessages: stats.totalReceivedMessages,
+        totalCommandsExecuted: stats.totalCommandsExecuted,
+        guildCount,
+        userCount,
+        messagePoolSize: messages.length,
+        rssMB: (memoryUsage.rss / 1024 / 1024).toFixed(2),
+        heapUsedMB: (memoryUsage.heapUsed / 1024 / 1024).toFixed(2),
+        heapTotalMB: (memoryUsage.heapTotal / 1024 / 1024).toFixed(2),
+        externalMB: (memoryUsage.external / 1024 / 1024).toFixed(2),
+        cpuUserSec: (cpuUsage.user / 1000000).toFixed(2),
+        cpuSystemSec: (cpuUsage.system / 1000000).toFixed(2),
+        activeChannelsCount: channelSettings.size,
+        nodeVersion: process.version,
+        platform: `${os.type()} (${os.arch()})`
+    });
+});
+
+// 管理パネル：ログイン画面（PIN: 1472）
 app.get('/', (req, res) => {
     res.send(`
         <!DOCTYPE html>
@@ -53,9 +114,9 @@ app.get('/', (req, res) => {
     `);
 });
 
-// Web管理パネル本体
+// 管理パネル本体（1秒ごとに自動更新）
 app.post('/admin', (req, res) => {
-    const { pin, newMode } = req.body;
+    const { pin, newMode, newActivity, newOnlineStatus } = req.body;
 
     if (pin !== ADMIN_PIN) {
         return res.status(401).send(`
@@ -74,13 +135,15 @@ app.post('/admin', (req, res) => {
         botStatusMode = newMode;
     }
 
-    const memoryUsage = process.memoryUsage();
-    const uptimeSeconds = Math.floor((Date.now() - stats.startTime) / 1000);
-    const ping = client.ws ? client.ws.ping : 0;
+    if (newActivity && newActivity.trim().length > 0 && client.user) {
+        currentActivityText = newActivity.trim();
+        client.user.setActivity(currentActivityText, { type: ActivityType.Playing });
+    }
 
-    let modeLabel = '🟢 通常稼働中 (normal)';
-    if (botStatusMode === 'maintenance') modeLabel = '🟡 点検中 (maintenance)';
-    if (botStatusMode === 'stopped') modeLabel = '🔴 完全停止中 (stopped)';
+    if (newOnlineStatus && ['online', 'idle', 'dnd', 'invisible'].includes(newOnlineStatus) && client.user) {
+        currentOnlineStatus = newOnlineStatus;
+        client.user.setStatus(currentOnlineStatus);
+    }
 
     res.send(`
         <!DOCTYPE html>
@@ -90,40 +153,61 @@ app.post('/admin', (req, res) => {
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>しゅんAIBOT 管理パネル</title>
             <style>
-                body { font-family: sans-serif; background: #1e1e1e; color: #fff; padding: 20px; max-width: 600px; margin: 0 auto; }
+                body { font-family: sans-serif; background: #1e1e1e; color: #fff; padding: 20px; max-width: 700px; margin: 0 auto; }
                 .card { background: #2c2f33; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
-                h1 { color: #00FF7F; font-size: 24px; }
-                .stat { font-size: 16px; margin: 10px 0; border-bottom: 1px solid #444; padding-bottom: 8px; }
-                .btn-group { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px; }
-                button { padding: 10px 15px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; flex: 1; }
+                h1 { color: #00FF7F; font-size: 22px; display: flex; align-items: center; justify-content: space-between; }
+                h3 { margin-top: 0; color: #00FF7F; border-bottom: 1px solid #444; padding-bottom: 8px; }
+                .live-badge { font-size: 12px; background: #00FF7F; color: #000; padding: 4px 8px; border-radius: 12px; font-weight: bold; }
+                .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; }
+                .stat { font-size: 14px; background: #23272a; padding: 10px; border-radius: 6px; }
+                .stat strong { color: #aaa; display: block; font-size: 12px; margin-bottom: 3px; }
+                .stat span { font-size: 15px; font-weight: bold; color: #fff; }
+                .btn-group { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+                button { padding: 10px 12px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; flex: 1; }
+                input[type="text"] { padding: 10px; border-radius: 6px; border: none; width: 65%; font-size: 14px; }
                 .btn-normal { background: #00FF7F; color: #000; }
                 .btn-maint { background: #FFD700; color: #000; }
                 .btn-stop { background: #FF4500; color: #fff; }
-                .btn-reload { background: #5865F2; color: #fff; width: 100%; margin-top: 10px; }
+                .btn-blue { background: #5865F2; color: #fff; }
             </style>
         </head>
         <body>
-            <h1>🤖 しゅんAIBOT 管理パネル</h1>
+            <h1>
+                <span>🤖 しゅんAIBOT 管理パネル</span>
+                <span class="live-badge">⚡ 1秒自動更新中</span>
+            </h1>
             
             <div class="card">
-                <h3>📊 現在のステータス</h3>
-                <div class="stat"><strong>現在のモード:</strong> ${modeLabel}</div>
-                <div class="stat"><strong>応答速度 (Ping):</strong> ${ping} ms</div>
-                <div class="stat"><strong>稼働時間:</strong> ${Math.floor(uptimeSeconds / 60)} 分 (${uptimeSeconds} 秒)</div>
-                <div class="stat"><strong>総送信メッセージ数:</strong> ${stats.totalSentMessages} 件</div>
-                <div class="stat"><strong>RAM使用量 (RSS):</strong> ${(memoryUsage.rss / 1024 / 1024).toFixed(2)} MB</div>
-                <div class="stat"><strong>ヒープ使用量:</strong> ${(memoryUsage.heapUsed / 1024 / 1024).toFixed(2)} MB</div>
-                <div class="stat"><strong>自動返信ONのチャンネル数:</strong> ${channelSettings.size} 個</div>
-                
-                <form action="/admin" method="POST">
-                    <input type="hidden" name="pin" value="${ADMIN_PIN}">
-                    <button type="submit" class="btn-reload">🔄 ステータスを最新に更新</button>
-                </form>
+                <h3>📊 Bot & サーバー統計</h3>
+                <div class="grid">
+                    <div class="stat"><strong>動作モード</strong><span id="modeLabel">読込中...</span></div>
+                    <div class="stat"><strong>オンライン状態</strong><span id="onlineStatusLabel">読込中...</span></div>
+                    <div class="stat"><strong>表示ステータス</strong><span id="activityText">読込中...</span></div>
+                    <div class="stat"><strong>応答速度 (Ping)</strong><span><span id="ping">0</span> ms</span></div>
+                    <div class="stat"><strong>連続稼働時間</strong><span id="uptimeText">読込中...</span></div>
+                    <div class="stat"><strong>導入サーバー / 総ユーザー</strong><span><span id="guildCount">0</span> 鯖 / <span id="userCount">0</span> 人</span></div>
+                    <div class="stat"><strong>総送信メッセージ数</strong><span><span id="totalSentMessages">0</span> 件</span></div>
+                    <div class="stat"><strong>総受信メッセージ数</strong><span><span id="totalReceivedMessages">0</span> 件</span></div>
+                    <div class="stat"><strong>コマンド実行回数</strong><span><span id="totalCommandsExecuted">0</span> 回</span></div>
+                    <div class="stat"><strong>自動返信ONチャンネル数</strong><span><span id="activeChannelsCount">0</span> 個</span></div>
+                    <div class="stat"><strong>登録セリフ総数</strong><span><span id="messagePoolSize">0</span> パターン</span></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>💻 サーバーリソース詳細 (Render)</h3>
+                <div class="grid">
+                    <div class="stat"><strong>RAM使用量 (RSS)</strong><span><span id="rssMB">0</span> MB</span></div>
+                    <div class="stat"><strong>ヒープ使用 / 確保</strong><span><span id="heapUsedMB">0</span> / <span id="heapTotalMB">0</span> MB</span></div>
+                    <div class="stat"><strong>外部メモリ (External)</strong><span><span id="externalMB">0</span> MB</span></div>
+                    <div class="stat"><strong>CPU時間 (User / Sys)</strong><span><span id="cpuUserSec">0</span>s / <span id="cpuSystemSec">0</span>s</span></div>
+                    <div class="stat"><strong>Node.js バージョン</strong><span id="nodeVersion">-</span></div>
+                    <div class="stat"><strong>実行環境 OS</strong><span id="platform">-</span></div>
+                </div>
             </div>
 
             <div class="card">
                 <h3>⚙️ Botモード遠隔切り替え</h3>
-                <p style="font-size: 13px; color: #ccc;">ここから直接Botの状態を切り替えられます</p>
                 <div class="btn-group">
                     <form action="/admin" method="POST" style="flex:1;">
                         <input type="hidden" name="pin" value="${ADMIN_PIN}">
@@ -141,11 +225,55 @@ app.post('/admin', (req, res) => {
                         <button type="submit" class="btn-stop">🔴 停止にする</button>
                     </form>
                 </div>
+
+                <h3 style="margin-top: 20px;">🎮 ステータス・オンライン状態変更</h3>
+                <form action="/admin" method="POST" style="display:flex; gap:8px; margin-bottom:12px;">
+                    <input type="hidden" name="pin" value="${ADMIN_PIN}">
+                    <input type="text" name="newActivity" placeholder="新しいステータス文字を入力" required>
+                    <button type="submit" class="btn-blue">文字変更</button>
+                </form>
+
+                <div class="btn-group">
+                    <form action="/admin" method="POST" style="flex:1;">
+                        <input type="hidden" name="pin" value="${ADMIN_PIN}">
+                        <input type="hidden" name="newOnlineStatus" value="online">
+                        <button type="submit" class="btn-normal">🟢 オンライン</button>
+                    </form>
+                    <form action="/admin" method="POST" style="flex:1;">
+                        <input type="hidden" name="pin" value="${ADMIN_PIN}">
+                        <input type="hidden" name="newOnlineStatus" value="idle">
+                        <button type="submit" class="btn-maint">🌙 退席中</button>
+                    </form>
+                    <form action="/admin" method="POST" style="flex:1;">
+                        <input type="hidden" name="pin" value="${ADMIN_PIN}">
+                        <input type="hidden" name="newOnlineStatus" value="dnd">
+                        <button type="submit" class="btn-stop">⛔ 取り込み中</button>
+                    </form>
+                </div>
             </div>
 
             <div style="text-align: center;">
                 <a href="/" style="color: #aaa; font-size: 14px;">ログアウト（PIN入力画面へ）</a>
             </div>
+
+            <script>
+                async function updateStats() {
+                    try {
+                        const res = await fetch('/api/stats?pin=${ADMIN_PIN}');
+                        if (!res.ok) return;
+                        const data = await res.json();
+                        
+                        for (const key in data) {
+                            const el = document.getElementById(key);
+                            if (el) el.textContent = data[key];
+                        }
+                    } catch (e) {
+                        console.error('更新エラー:', e);
+                    }
+                }
+                updateStats();
+                setInterval(updateStats, 1000); // 1秒ごとに自動更新
+            </script>
         </body>
         </html>
     `);
@@ -153,7 +281,7 @@ app.post('/admin', (req, res) => {
 
 app.listen(port, () => console.log(`Webサーバー起動 (Port: ${port})`));
 
-// オンラインマークを「スマホ（Discord Android）」にする設定
+// Discordクライアント設定（スマホAndroidオンラインマーク設定）
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -167,6 +295,7 @@ const client = new Client({
     }
 });
 
+// スラッシュコマンド定義
 const commands = [
     new SlashCommandBuilder()
         .setName('ここで話さない')
@@ -193,10 +322,10 @@ const commands = [
         ),
     new SlashCommandBuilder()
         .setName('今どんなかんじ')
-        .setDescription('このサーバーの自動返信チャンネルやPing、RAM使用量を確認しよー！'),
+        .setDescription('このサーバーの自動返信チャンネルや詳細なステータスを確認しよー！'),
     new SlashCommandBuilder()
         .setName('botモード')
-        .setDescription('Botの状態（通常・点検中・停止）を切り替えるぜ☆（管理者向け）')
+        .setDescription('Botの状態（通常・点検中・停止）を切り替えるぜ☆')
         .addStringOption(option =>
             option.setName('モード')
                 .setDescription('切り替えるモード')
@@ -206,12 +335,48 @@ const commands = [
                     { name: '点検中 (maintenance)', value: 'maintenance' },
                     { name: '停止 (stopped)', value: 'stopped' }
                 )
+        ),
+    new SlashCommandBuilder()
+        .setName('ステータス')
+        .setDescription('Botのプロフィール表示（プレイ中やオンライン状態）を変更するぜ☆')
+        .addStringOption(option =>
+            option.setName('内容')
+                .setDescription('表示したいステータスの文字')
+                .setRequired(true)
+        )
+        .addStringOption(option =>
+            option.setName('種類')
+                .setDescription('ステータスの種類（省略時は「プレイ中」）')
+                .setRequired(false)
+                .addChoices(
+                    { name: '〜をプレイ中', value: 'Playing' },
+                    { name: '〜を視聴中', value: 'Watching' },
+                    { name: '〜を再生中', value: 'Listening' },
+                    { name: '〜に参戦中', value: 'Competing' },
+                    { name: 'カスタムステータス', value: 'Custom' }
+                )
+        )
+        .addStringOption(option =>
+            option.setName('オンライン状態')
+                .setDescription('オンラインマークの色（省略時は変更なし）')
+                .setRequired(false)
+                .addChoices(
+                    { name: '🟢 オンライン', value: 'online' },
+                    { name: '🌙 退席中', value: 'idle' },
+                    { name: '⛔ 取り込み中', value: 'dnd' },
+                    { name: '⚫ オフライン表示', value: 'invisible' }
+                )
         )
 ].map(cmd => cmd.toJSON());
 
 client.once('ready', async () => {
     console.log(`${client.user.tag} がスマホモードでログインしたぜ！`);
     console.log(`登録メッセージ総数: ${messages.length}個`);
+
+    client.user.setPresence({
+        activities: [{ name: currentActivityText, type: ActivityType.Playing }],
+        status: currentOnlineStatus
+    });
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
@@ -228,6 +393,7 @@ client.once('ready', async () => {
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
+    stats.totalCommandsExecuted++;
     const { commandName, channelId, guild } = interaction;
 
     if (commandName === 'ここで話さない') {
@@ -254,8 +420,15 @@ client.on('interactionCreate', async interaction => {
     else if (commandName === '今どんなかんじ') {
         const memory = process.memoryUsage();
         const ramUsageMB = (memory.rss / 1024 / 1024).toFixed(2);
-        const heapMB = (memory.heapUsed / 1024 / 1024).toFixed(2);
-        const uptimeMin = Math.floor((Date.now() - stats.startTime) / 60000);
+        const heapUsedMB = (memory.heapUsed / 1024 / 1024).toFixed(2);
+        const heapTotalMB = (memory.heapTotal / 1024 / 1024).toFixed(2);
+        
+        const uptimeSec = Math.floor((Date.now() - stats.startTime) / 1000);
+        const hours = Math.floor(uptimeSec / 3600);
+        const mins = Math.floor((uptimeSec % 3600) / 60);
+
+        const guildCount = client.guilds.cache.size;
+        const userCount = client.guilds.cache.reduce((acc, g) => acc + g.memberCount, 0);
 
         const activeChannels = [];
         for (const [id, setting] of channelSettings.entries()) {
@@ -266,15 +439,22 @@ client.on('interactionCreate', async interaction => {
 
         const embed = new EmbedBuilder()
             .setColor(0x00FF7F)
-            .setTitle('📊 しゅんAIBOTのステータスだぜ☆')
+            .setTitle('📊 しゅんAIBOTの超詳細ステータスだぜ☆')
             .addFields(
-                { name: '🌐 Botモード', value: `\`${botStatusMode}\``, inline: true },
+                { name: '🌐 動作モード', value: `\`${botStatusMode}\``, inline: true },
                 { name: '📶 応答速度 (Ping)', value: `${client.ws.ping} ms`, inline: true },
-                { name: '⏱️ 稼働時間', value: `${uptimeMin} 分`, inline: true },
-                { name: '💻 RAM使用量 (RSS)', value: `${ramUsageMB} MB (Heap: ${heapMB}MB)`, inline: true },
-                { name: '💬 総送信メッセージ数', value: `${stats.totalSentMessages} 件`, inline: true },
-                { name: '📂 自動返信チャンネル数', value: `${activeChannels.length} 個`, inline: true },
-                { name: '⚙️ 有効なチャンネル一覧', value: activeChannels.length > 0 ? activeChannels.join('\n') : 'なし（メンションで反応するよ）' }
+                { name: '⏱️ 連続稼働時間', value: `${hours}時間 ${mins}分`, inline: true },
+                { name: '🏰 導入サーバー数', value: `${guildCount} サーバー`, inline: true },
+                { name: '👥 合計ユーザー数', value: `${userCount} 人`, inline: true },
+                { name: '📝 登録セリフ数', value: `${messages.length} 個`, inline: true },
+                { name: '💬 総送信数', value: `${stats.totalSentMessages} 件`, inline: true },
+                { name: '📩 総受信数', value: `${stats.totalReceivedMessages} 件`, inline: true },
+                { name: '⚡ コマンド実行数', value: `${stats.totalCommandsExecuted} 回`, inline: true },
+                { name: '💻 RAM使用量 (RSS)', value: `${ramUsageMB} MB`, inline: true },
+                { name: '🧠 ヒープメモリ', value: `${heapUsedMB} / ${heapTotalMB} MB`, inline: true },
+                { name: '🖥️ 実行環境', value: `Node ${process.version}`, inline: true },
+                { name: '🎮 表示ステータス', value: `\`${currentActivityText}\``, inline: false },
+                { name: '⚙️ 自動返信有効チャンネル', value: activeChannels.length > 0 ? activeChannels.join('\n') : 'なし（メンションか返信で反応するよ）' }
             );
 
         await interaction.reply({ embeds: [embed] });
@@ -289,18 +469,42 @@ client.on('interactionCreate', async interaction => {
 
         await interaction.reply(`⚙️ Botのモードを **${modeText}** に切り替えたぜ！`);
     }
+    else if (commandName === 'ステータス') {
+        const text = interaction.options.getString('内容');
+        const typeStr = interaction.options.getString('種類') || 'Playing';
+        const onlineOpt = interaction.options.getString('オンライン状態');
+
+        const typeMap = {
+            'Playing': ActivityType.Playing,
+            'Watching': ActivityType.Watching,
+            'Listening': ActivityType.Listening,
+            'Competing': ActivityType.Competing,
+            'Custom': ActivityType.Custom
+        };
+
+        currentActivityText = text;
+        if (onlineOpt) {
+            currentOnlineStatus = onlineOpt;
+        }
+
+        client.user.setPresence({
+            activities: [{ name: text, type: typeMap[typeStr] }],
+            status: currentOnlineStatus
+        });
+
+        await interaction.reply(`🎮 ステータスを **「${text}」** に変更したぜ☆`);
+    }
 });
 
 client.on('messageCreate', async message => {
     if (message.author.bot || !message.guild) return;
 
-    // 停止中の場合はすべて無視
+    stats.totalReceivedMessages++;
+
     if (botStatusMode === 'stopped') return;
 
-    // メンションされたか判定
     const isMentioned = message.mentions.has(client.user);
 
-    // Botのメッセージに対する「返信（リプライ）」か判定
     let isReplyToBot = false;
     if (message.reference && message.reference.messageId) {
         try {
@@ -308,22 +512,17 @@ client.on('messageCreate', async message => {
             if (repliedMessage.author.id === client.user.id) {
                 isReplyToBot = true;
             }
-        } catch (err) {
-            // 元メッセージが削除されている場合などは無視
-        }
+        } catch (err) {}
     }
 
-    // 点検中の場合は、メンションかBotへの返信のみ応答
     if (botStatusMode === 'maintenance' && !isMentioned && !isReplyToBot) return;
 
     const setting = channelSettings.get(message.channel.id);
     let shouldReply = false;
 
     if (isMentioned || isReplyToBot) {
-        // メンションされた場合、またはBotに返信した場合は必ず応答
         shouldReply = true;
     } else if (setting && setting.enabled) {
-        // 自動返信チャンネルの場合、確率で抽選
         const roll = Math.random() * 100;
         if (roll < setting.probability) {
             shouldReply = true;
