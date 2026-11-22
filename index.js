@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActivityType, PermissionFlagsBits } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActivityType } = require('discord.js');
 const express = require('express');
 const os = require('os');
 const messages = require('./messages');
@@ -281,16 +281,14 @@ const client = new Client({
     }
 });
 
-// スラッシュコマンド定義
+// スラッシュコマンド定義（権限制限なし）
 const commands = [
     new SlashCommandBuilder()
         .setName('ここで話さない')
-        .setDescription('このチャンネルを自動返信対象から外すんね')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+        .setDescription('このチャンネルを自動返信対象から外すんね'),
     new SlashCommandBuilder()
         .setName('ここで話す')
         .setDescription('指定したチャンネルで自動返信するぜ☆')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addBooleanOption(option =>
             option.setName('メンションなし')
                 .setDescription('メンションしなくても自動返信するかどうか (true/false)')
@@ -311,7 +309,6 @@ const commands = [
     new SlashCommandBuilder()
         .setName('確率変えよー')
         .setDescription('このチャンネルのメンションなし反応確率を変更するぜ☆')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addIntegerOption(option =>
             option.setName('確率')
                 .setDescription('新しい反応確率（1〜100%）')
@@ -321,12 +318,10 @@ const commands = [
         ),
     new SlashCommandBuilder()
         .setName('今どんなかんじ')
-        .setDescription('このサーバーの自動返信チャンネルや詳細なステータスを確認しよー！')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+        .setDescription('このサーバーの自動返信チャンネルや詳細なステータスを確認しよー！'),
     new SlashCommandBuilder()
         .setName('ステータス')
         .setDescription('Botのプロフィール表示（プレイ中やオンライン状態）を変更するぜ☆')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addStringOption(option =>
             option.setName('内容')
                 .setDescription('表示したいステータスの文字')
@@ -387,7 +382,7 @@ client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
     stats.totalCommandsExecuted++;
-    const { commandName, channelId, guild } = interaction;
+    const { commandName, channelId } = interaction;
 
     if (commandName === 'ここで話さない') {
         channelSettings.delete(channelId);
@@ -528,16 +523,13 @@ client.on('messageCreate', async message => {
             replyText = greetingReply || messages[Math.floor(Math.random() * messages.length)];
         }
     } else if (greetingReply) {
-        // 自動返信OFFのチャンネルでも挨拶には反応する
         shouldReply = true;
         replyText = greetingReply;
     }
 
     if (shouldReply && replyText) {
-        // 「しゅんAIBOTが入力中...」を表示させる
         await message.channel.sendTyping();
         
-        // 少しだけ人間らしく待つ（0.8秒〜1.5秒）
         const delay = Math.floor(Math.random() * 700) + 800;
         await new Promise(resolve => setTimeout(resolve, delay));
 
