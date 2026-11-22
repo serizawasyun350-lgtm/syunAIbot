@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActivityType } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActivityType, PermissionFlagsBits } = require('discord.js');
 const express = require('express');
 const os = require('os');
 const messages = require('./messages');
@@ -295,14 +295,16 @@ const client = new Client({
     }
 });
 
-// スラッシュコマンド定義（ここで話す にメンション不要・チャンネル指定オプション追加）
+// スラッシュコマンド定義（すべてのコマンドに管理者権限（Administrator）を付与）
 const commands = [
     new SlashCommandBuilder()
         .setName('ここで話さない')
-        .setDescription('このチャンネルを自動返信対象から外すんね'),
+        .setDescription('このチャンネルを自動返信対象から外すんね')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     new SlashCommandBuilder()
         .setName('ここで話す')
         .setDescription('指定したチャンネルで自動返信するぜ☆')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addBooleanOption(option =>
             option.setName('メンションなし')
                 .setDescription('メンションしなくても自動返信するかどうか (true/false)')
@@ -323,6 +325,7 @@ const commands = [
     new SlashCommandBuilder()
         .setName('確率変えよー')
         .setDescription('このチャンネルのメンションなし反応確率を変更するぜ☆')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addIntegerOption(option =>
             option.setName('確率')
                 .setDescription('新しい反応確率（1〜100%）')
@@ -332,10 +335,12 @@ const commands = [
         ),
     new SlashCommandBuilder()
         .setName('今どんなかんじ')
-        .setDescription('このサーバーの自動返信チャンネルや詳細なステータスを確認しよー！'),
+        .setDescription('このサーバーの自動返信チャンネルや詳細なステータスを確認しよー！')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     new SlashCommandBuilder()
         .setName('botモード')
         .setDescription('Botの状態（通常・点検中・停止）を切り替えるぜ☆')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addStringOption(option =>
             option.setName('モード')
                 .setDescription('切り替えるモード')
@@ -349,6 +354,7 @@ const commands = [
     new SlashCommandBuilder()
         .setName('ステータス')
         .setDescription('Botのプロフィール表示（プレイ中やオンライン状態）を変更するぜ☆')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addStringOption(option =>
             option.setName('内容')
                 .setDescription('表示したいステータスの文字')
@@ -412,7 +418,7 @@ client.on('interactionCreate', async interaction => {
     } 
     else if (commandName === 'ここで話す') {
         const targetChannel = interaction.options.getChannel('チャンネル') || interaction.channel;
-        const noMention = interaction.options.getBoolean('メンションなし') ?? true; // デフォルトtrue
+        const noMention = interaction.options.getBoolean('メンションなし') ?? true;
         const prob = interaction.options.getInteger('確率') ?? 100;
 
         channelSettings.set(targetChannel.id, { 
