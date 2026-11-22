@@ -2,10 +2,34 @@ const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuild
 const express = require('express');
 const messages = require('./messages');
 
-// Renderのスリープ防止・ポート監視用Webサーバー
+// Renderのスリープ防止・ポート監視用Webサーバー 兼 ステータス確認用ページ
 const app = express();
 const port = process.env.PORT || 3000;
-app.get('/', (req, res) => res.send('しゅんAIBOTは元気に稼働中だぜ☆'));
+
+// Bot全体の統計データを保持する変数
+let stats = {
+    totalSentMessages: 0,
+    startTime: Date.now()
+};
+
+app.get('/', (req, res) => {
+    const memoryUsage = process.memoryUsage();
+    const uptimeSeconds = Math.floor((Date.now() - stats.startTime) / 1000);
+    
+    res.send(`
+        <html>
+            <head><title>しゅんAIBOTステータス</title></head>
+            <body style="font-family: sans-serif; padding: 20px; background: #1e1e1e; color: #fff;">
+                <h1>🤖 しゅんAIBOT 稼働中だぜ☆</h1>
+                <p><strong>稼働時間:</strong> ${Math.floor(uptimeSeconds / 60)} 分 (${uptimeSeconds} 秒)</p>
+                <p><strong>総送信メッセージ数:</strong> ${stats.totalSentMessages} 件</p>
+                <p><strong>RAM使用量 (RSS):</strong> ${(memoryUsage.rss / 1024 / 1024).toFixed(2)} MB</p>
+                <p><strong>ヒープ使用量:</strong> ${(memoryUsage.heapUsed / 1024 / 1024).toFixed(2)} MB</p>
+            </body>
+        </html>
+    `);
+});
+
 app.listen(port, () => console.log(`Webサーバー起動 (Port: ${port})`));
 
 // オンラインマークを「スマホ（Discord Android）」にする設定
@@ -22,11 +46,11 @@ const client = new Client({
     }
 });
 
-// チャンネルごとの設定保存（メモリ保存：再起動で初期値に戻ります）
-// key: channelId, value: { enabled: boolean, probability: number }
+// チャンネルごとの設定 & Bot全体の設定（メンテナンスモードなど）
 const channelSettings = new Map();
+let botStatusMode = 'normal'; // 'normal' (通常), 'maintenance' (点検中), 'stopped' (停止中)
 
-// スラッシュコマンドの定義（画像の通りに設定）
+// スラッシュコマンドの定義（追加機能含む）
 const commands = [
     new SlashCommandBuilder()
         .setName('ここで話さない')
@@ -53,13 +77,25 @@ const commands = [
         ),
     new SlashCommandBuilder()
         .setName('今どんなかんじ')
-        .setDescription('このサーバーの自動返信チャンネルと反応確率を確認しよー！')
+        .setDescription('このサーバーの自動返信チャンネルやPing、RAM使用量を確認しよー！'),
+    new SlashCommandBuilder()
+        .setName('botモード')
+        .setDescription('Botの状態（通常・点検中・停止）を切り替えるぜ☆（管理者向け）')
+        .addStringOption(option =>
+            option.setName('モード')
+                .setDescription('切り替えるモード')
+                .setRequired(true)
+                .addChoices(
+                    { name: '通常 (normal)', value: 'normal' },
+                    { name: '点検中 (maintenance)', value: 'maintenance' },
+                    { name: '停止 (stopped)', value: 'stopped' }
+                )
+        )
 ].map(cmd => cmd.toJSON());
 
-// 起動時の処理とコマンド登録
 client.once('ready', async () => {
     console.log(`${client.user.tag} がスマホモードでログインしたぜ！`);
-    console.log(`登録メッセージ数: ${messages.length}個`);
+    console.log(`登録メッセージ総数: ${messages.length}個`);
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
@@ -73,7 +109,6 @@ client.once('ready', async () => {
     }
 });
 
-// スラッシュコマンド実行時の処理
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
@@ -101,29 +136,54 @@ client.on('interactionCreate', async interaction => {
         }
     } 
     else if (commandName === '今どんなかんじ') {
+        // RAM使用量計算 (MB)
+        const memory = process.memoryUsage();
+        const ramUsageMB = (memory.rss / 1024 / 1024).toFixed(2);
+        const heapMB = (memory.heapUsed / 1024 / 1024).toFixed(2);
+        
+        // 稼働時間計算
+        const uptimeMin = Math.floor((Date.now() - stats.startTime) / 60000);
+
         const activeChannels = [];
         for (const [id, setting] of channelSettings.entries()) {
             if (setting.enabled && guild.channels.cache.has(id)) {
-                activeChannels.push(`・<#${id}> ： 反応確率 **${setting.probability}%**`);
+                activeChannels.push(`・<#${id}> （${setting.probability}%）`);
             }
         }
 
         const embed = new EmbedBuilder()
             .setColor(0x00FF7F)
-            .setTitle('しゅんAIBOTの現在の設定だぜ☆')
-            .setDescription(
-                activeChannels.length > 0
-                    ? activeChannels.join('\n')
-                    : '今はこのサーバーで自動返信するチャンネルはないよ！（メンションされたら話すぜ）'
+            .setTitle('📊 しゅんAIBOTのステータスだぜ☆')
+            .addFields(
+                { name: '🌐 Botモード', value: `\`${botStatusMode}\``, inline: true },
+                { name: '📶 応答速度 (Ping)', value: `${client.ws.ping} ms`, inline: true },
+                { name: '⏱️ 稼働時間', value: `${uptimeMin} 分`, inline: true },
+                { name: '💻 RAM使用量 (RSS)', value: `${ramUsageMB} MB (Heap: ${heapMB}MB)`, inline: true },
+                { name: '💬 総送信メッセージ数', value: `${stats.totalSentMessages} 件`, inline: true },
+                { name: '📂 自動返信チャンネル数', value: `${activeChannels.length} 個`, inline: true },
+                { name: '⚙️ 有効なチャンネル一覧', value: activeChannels.length > 0 ? activeChannels.join('\n') : 'なし（メンションで反応するよ）' }
             );
 
         await interaction.reply({ embeds: [embed] });
     }
+    else if (commandName === 'botモード') {
+        const newMode = interaction.options.getString('モード');
+        botStatusMode = newMode;
+        
+        let modeText = '通常モード';
+        if (newMode === 'maintenance') modeText = '点検中モード（自動返信停止中）';
+        if (newMode === 'stopped') modeText = '完全停止モード（すべて無視）';
+
+        await interaction.reply(`⚙️ Botのモードを **${modeText}** に切り替えたぜ！`);
+    }
 });
 
-// メッセージ受信時の自動返信処理
 client.on('messageCreate', async message => {
     if (message.author.bot || !message.guild) return;
+
+    // 停止中または点検中の場合はメッセージに反応しない
+    if (botStatusMode === 'stopped') return;
+    if (botStatusMode === 'maintenance' && !message.mentions.has(client.user)) return;
 
     const isMentioned = message.mentions.has(client.user);
     const setting = channelSettings.get(message.channel.id);
@@ -131,10 +191,8 @@ client.on('messageCreate', async message => {
     let shouldReply = false;
 
     if (isMentioned) {
-        // メンションされた場合は必ず返信
         shouldReply = true;
     } else if (setting && setting.enabled) {
-        // 自動返信チャンネルの場合、設定された確率で抽選
         const roll = Math.random() * 100;
         if (roll < setting.probability) {
             shouldReply = true;
@@ -144,8 +202,10 @@ client.on('messageCreate', async message => {
     if (shouldReply) {
         const randomMsg = messages[Math.floor(Math.random() * messages.length)];
         await message.reply(randomMsg);
+        
+        // 統計データのカウントアップ
+        stats.totalSentMessages++;
     }
 });
 
-// Renderの環境変数からトークンを読み込んでログイン
 client.login(process.env.DISCORD_TOKEN);
