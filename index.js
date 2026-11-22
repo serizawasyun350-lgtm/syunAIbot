@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActivityType, PermissionFlagsBits } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActivityType } = require('discord.js');
 const express = require('express');
 const os = require('os');
 const messages = require('./messages');
@@ -20,7 +20,6 @@ let stats = {
 };
 
 const channelSettings = new Map();
-let botStatusMode = 'normal'; // 'normal' (通常), 'maintenance' (点検中), 'stopped' (停止中)
 let currentActivityText = 'ちくわを食べながら待機中☆';
 let currentOnlineStatus = 'online';
 
@@ -70,10 +69,6 @@ app.get('/api/stats', (req, res) => {
         ? client.guilds.cache.reduce((acc, g) => acc + g.memberCount, 0)
         : 0;
 
-    let modeLabel = '🟢 通常稼働中 (normal)';
-    if (botStatusMode === 'maintenance') modeLabel = '🟡 点検中 (maintenance)';
-    if (botStatusMode === 'stopped') modeLabel = '🔴 完全停止中 (stopped)';
-
     const statusNameMap = {
         online: '🟢 オンライン',
         idle: '🌙 退席中',
@@ -82,7 +77,6 @@ app.get('/api/stats', (req, res) => {
     };
 
     res.json({
-        modeLabel,
         onlineStatusLabel: statusNameMap[currentOnlineStatus] || '🟢 オンライン',
         activityText: currentActivityText,
         ping,
@@ -287,16 +281,14 @@ const client = new Client({
     }
 });
 
-// スラッシュコマンド定義
+// スラッシュコマンド定義（権限制限なし）
 const commands = [
     new SlashCommandBuilder()
         .setName('ここで話さない')
-        .setDescription('このチャンネルを自動返信対象から外すんね')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+        .setDescription('このチャンネルを自動返信対象から外すんね'),
     new SlashCommandBuilder()
         .setName('ここで話す')
         .setDescription('指定したチャンネルで自動返信するぜ☆')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addBooleanOption(option =>
             option.setName('メンションなし')
                 .setDescription('メンションしなくても自動返信するかどうか (true/false)')
@@ -317,7 +309,6 @@ const commands = [
     new SlashCommandBuilder()
         .setName('確率変えよー')
         .setDescription('このチャンネルのメンションなし反応確率を変更するぜ☆')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addIntegerOption(option =>
             option.setName('確率')
                 .setDescription('新しい反応確率（1〜100%）')
@@ -327,12 +318,10 @@ const commands = [
         ),
     new SlashCommandBuilder()
         .setName('今どんなかんじ')
-        .setDescription('このサーバーの自動返信チャンネルや詳細なステータスを確認しよー！')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+        .setDescription('このサーバーの自動返信チャンネルや詳細なステータスを確認しよー！'),
     new SlashCommandBuilder()
         .setName('ステータス')
         .setDescription('Botのプロフィール表示（プレイ中やオンライン状態）を変更するぜ☆')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addStringOption(option =>
             option.setName('内容')
                 .setDescription('表示したいステータスの文字')
@@ -393,7 +382,7 @@ client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
     stats.totalCommandsExecuted++;
-    const { commandName, channelId, guild } = interaction;
+    const { commandName, channelId } = interaction;
 
     if (commandName === 'ここで話さない') {
         channelSettings.delete(channelId);
@@ -424,9 +413,6 @@ client.on('interactionCreate', async interaction => {
         }
     } 
     else if (commandName === '今どんなかんじ') {
-        const memory = process.memoryUsage();
-        const ramUsageMB = (memory.rss / 1024 / 1024).toFixed(2);
-        
         const uptimeSec = Math.floor((Date.now() - stats.startTime) / 1000);
         const hours = Math.floor(uptimeSec / 3600);
         const mins = Math.floor((uptimeSec % 3600) / 60);
@@ -476,6 +462,34 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
+// 挨拶の判定と専用返事を返す関数
+function getGreetingReply(content) {
+    const text = content.trim();
+    if (/おはよう|おはよー|おはよ/.test(text)) {
+        const list = ['おはよう！今日も一日がんばろーぜ☆', 'おはよー！朝ごはんにちくわ食べた？', 'ふわぁ…おはよう！よく眠れた？'];
+        return list[Math.floor(Math.random() * list.length)];
+    }
+    if (/こんにちは|こんちゃ|ちわ|やっほー|ハロー/.test(text)) {
+        const list = ['こんにちはー！元気にしてた？☆', 'やっほー！今日もいい天気だな〜', 'こんちゃ！ちくわ食べる？'];
+        return list[Math.floor(Math.random() * list.length)];
+    }
+    if (/こんばんは|こんばんわ|ばんは/.test(text)) {
+        const list = ['こんばんはー！今日もお疲れさま☆', 'こんばんわ！夜ふかししすぎんなよー？', 'こんばんは！夜食にちくわどう？'];
+        return list[Math.floor(Math.random() * list.length)];
+    }
+    if (/おやすみ|おやすみなさい|寝るわ|ねむい/.test(text)) {
+        const list = ['おやすみー！いい夢見ろよな☆', 'おやすみなさい！また明日な〜', 'おやすみ！ちくわの夢見ろよｗ'];
+        return list[Math.floor(Math.random() * list.length)];
+    }
+    if (/よろしく|はじめまして/.test(text)) {
+        return 'よろしくなー！しゅんAIBOTだぜ☆ 仲良くしよー！';
+    }
+    if (/ありがとう|ありがと|あざす/.test(text)) {
+        return 'どういたしましてだぜ☆ いつでも頼ってくれよな！';
+    }
+    return null;
+}
+
 client.on('messageCreate', async message => {
     if (message.author.bot || !message.guild) return;
 
@@ -494,20 +508,32 @@ client.on('messageCreate', async message => {
     }
 
     const setting = channelSettings.get(message.channel.id);
+    const greetingReply = getGreetingReply(message.content);
+
     let shouldReply = false;
+    let replyText = null;
 
     if (isMentioned || isReplyToBot) {
         shouldReply = true;
+        replyText = greetingReply || messages[Math.floor(Math.random() * messages.length)];
     } else if (setting && setting.enabled) {
         const roll = Math.random() * 100;
         if (roll < setting.probability) {
             shouldReply = true;
+            replyText = greetingReply || messages[Math.floor(Math.random() * messages.length)];
         }
+    } else if (greetingReply) {
+        shouldReply = true;
+        replyText = greetingReply;
     }
 
-    if (shouldReply) {
-        const randomMsg = messages[Math.floor(Math.random() * messages.length)];
-        await message.reply(randomMsg);
+    if (shouldReply && replyText) {
+        await message.channel.sendTyping();
+        
+        const delay = Math.floor(Math.random() * 700) + 800;
+        await new Promise(resolve => setTimeout(resolve, delay));
+
+        await message.reply(replyText);
         stats.totalSentMessages++;
     }
 });
