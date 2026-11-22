@@ -8,7 +8,7 @@ const port = process.env.PORT || 3000;
 
 app.use(express.urlencoded({ extended: true }));
 
-const ADMIN_PIN = '2634';
+const ADMIN_PIN = '1472';
 
 // 統計データ管理
 let stats = {
