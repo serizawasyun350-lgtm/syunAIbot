@@ -8,7 +8,7 @@ const port = process.env.PORT || 3000;
 
 app.use(express.urlencoded({ extended: true }));
 
-const ADMIN_PIN = '2827';
+const ADMIN_PIN = '1472';
 
 // 統計データ管理
 let stats = {
@@ -22,7 +22,7 @@ let stats = {
 const channelSettings = new Map();
 let botStatusMode = 'normal'; // 'normal' (通常), 'maintenance' (点検中), 'stopped' (停止中)
 let currentActivityText = 'ちくわを食べながら待機中☆';
-let currentOnlineStatus = 'online'; // 'online', 'idle', 'dnd', 'invisible'
+let currentOnlineStatus = 'online';
 
 // リアルタイムコンソールログ
 const consoleLogs = [];
@@ -58,7 +58,6 @@ app.get('/api/stats', (req, res) => {
     }
 
     const memoryUsage = process.memoryUsage();
-    const cpuUsage = process.cpuUsage();
     const uptimeSeconds = Math.floor((Date.now() - stats.startTime) / 1000);
     const days = Math.floor(uptimeSeconds / 86400);
     const hours = Math.floor((uptimeSeconds % 86400) / 3600);
@@ -97,14 +96,7 @@ app.get('/api/stats', (req, res) => {
         userCount,
         messagePoolSize: messages.length,
         rssMB: (memoryUsage.rss / 1024 / 1024).toFixed(2),
-        heapUsedMB: (memoryUsage.heapUsed / 1024 / 1024).toFixed(2),
-        heapTotalMB: (memoryUsage.heapTotal / 1024 / 1024).toFixed(2),
-        externalMB: (memoryUsage.external / 1024 / 1024).toFixed(2),
-        cpuUserSec: (cpuUsage.user / 1000000).toFixed(2),
-        cpuSystemSec: (cpuUsage.system / 1000000).toFixed(2),
         activeChannelsCount: channelSettings.size,
-        nodeVersion: process.version,
-        platform: `${os.type()} (${os.arch()})`,
         logs: consoleLogs.slice(0, 30).join('\n')
     });
 });
@@ -140,9 +132,9 @@ app.get('/', (req, res) => {
     `);
 });
 
-// 管理パネル本体
+// 管理パネル本体（ステータス変更とコンソールのみ）
 app.post('/admin', (req, res) => {
-    const { pin, newMode, newActivity, newOnlineStatus, systemAction } = req.body;
+    const { pin, newActivity, newOnlineStatus } = req.body;
 
     if (pin !== ADMIN_PIN) {
         return res.status(401).send(`
@@ -157,26 +149,6 @@ app.post('/admin', (req, res) => {
         `);
     }
 
-    // 再起動・停止処理の改善（確実にプロセスを落としてRenderに自動復旧させる）
-    if (systemAction === 'shutdown') {
-        console.log('⚠️ 管理パネルから完全停止が実行されました。');
-        res.send(`<!DOCTYPE html><html lang="ja"><body style="background:#1e1e1e;color:#ff5555;text-align:center;padding-top:100px;font-family:sans-serif;"><h1>🔴 Botを完全に停止しました。</h1><a href="/" style="color:#00FF7F;">ログイン画面へ</a></body></html>`);
-        setTimeout(() => process.exit(0), 500);
-        return;
-    }
-
-    if (systemAction === 'restart') {
-        console.log('🔄 管理パネルから再起動が実行されました。');
-        res.send(`<!DOCTYPE html><html lang="ja"><body style="background:#1e1e1e;color:#FFD700;text-align:center;padding-top:100px;font-family:sans-serif;"><h1>🔄 Botを再起動しています...</h1><p>数秒後に更新してください。</p><a href="/" style="color:#00FF7F;">ログイン画面へ</a></body></html>`);
-        setTimeout(() => process.exit(0), 500); // 0にすることでRender側が確実に再起動を検知しやすくなります
-        return;
-    }
-
-    if (newMode && ['normal', 'maintenance', 'stopped'].includes(newMode)) {
-        botStatusMode = newMode;
-    }
-
-    // ステータス変更を確実に適用する処理
     if (newActivity && newActivity.trim().length > 0) {
         currentActivityText = newActivity.trim();
     }
@@ -225,20 +197,14 @@ app.post('/admin', (req, res) => {
             </h1>
             
             <div class="card">
-                <h3>📊 Bot & サーバー統計</h3>
+                <h3>📊 基本ステータス</h3>
                 <div class="grid">
-                    <div class="stat"><strong>動作モード</strong><span id="modeLabel">読込中...</span></div>
                     <div class="stat"><strong>オンライン状態</strong><span id="onlineStatusLabel">読込中...</span></div>
                     <div class="stat"><strong>表示ステータス</strong><span id="activityText">読込中...</span></div>
                     <div class="stat"><strong>応答速度 (Ping)</strong><span><span id="ping">0</span> ms</span></div>
                     <div class="stat"><strong>連続稼働時間</strong><span id="uptimeText">読込中...</span></div>
-                    <div class="stat"><strong>Bot認証（導入）回数</strong><span><span id="totalAuthCount">0</span> 回</span></div>
-                    <div class="stat"><strong>スラッシュコマンド数</strong><span><span id="commandCount">0</span> 個</span></div>
                     <div class="stat"><strong>導入サーバー / 総ユーザー</strong><span><span id="guildCount">0</span> 鯖 / <span id="userCount">0</span> 人</span></div>
                     <div class="stat"><strong>総送信メッセージ数</strong><span><span id="totalSentMessages">0</span> 件</span></div>
-                    <div class="stat"><strong>総受信メッセージ数</strong><span><span id="totalReceivedMessages">0</span> 件</span></div>
-                    <div class="stat"><strong>コマンド実行回数</strong><span><span id="totalCommandsExecuted">0</span> 回</span></div>
-                    <div class="stat"><strong>自動返信ONチャンネル数</strong><span><span id="activeChannelsCount">0</span> 個</span></div>
                 </div>
             </div>
 
@@ -248,39 +214,7 @@ app.post('/admin', (req, res) => {
             </div>
 
             <div class="card">
-                <h3>⚙️ Botコントロール & 電源管理</h3>
-                <div class="btn-group" style="margin-bottom: 15px;">
-                    <form action="/admin" method="POST" style="flex:1;">
-                        <input type="hidden" name="pin" value="${ADMIN_PIN}">
-                        <input type="hidden" name="newMode" value="normal">
-                        <button type="submit" class="btn-normal">🟢 通常モード</button>
-                    </form>
-                    <form action="/admin" method="POST" style="flex:1;">
-                        <input type="hidden" name="pin" value="${ADMIN_PIN}">
-                        <input type="hidden" name="newMode" value="maintenance">
-                        <button type="submit" class="btn-maint">🟡 点検中</button>
-                    </form>
-                    <form action="/admin" method="POST" style="flex:1;">
-                        <input type="hidden" name="pin" value="${ADMIN_PIN}">
-                        <input type="hidden" name="newMode" value="stopped">
-                        <button type="submit" class="btn-stop">🔴 一時停止</button>
-                    </form>
-                </div>
-
-                <div class="btn-group">
-                    <form action="/admin" method="POST" style="flex:1;" onsubmit="return confirm('本当にBotを再起動しますか？');">
-                        <input type="hidden" name="pin" value="${ADMIN_PIN}">
-                        <input type="hidden" name="systemAction" value="restart">
-                        <button type="submit" class="btn-blue">🔄 Bot再起動</button>
-                    </form>
-                    <form action="/admin" method="POST" style="flex:1;" onsubmit="return confirm('本当にBotを完全に停止しますか？');">
-                        <input type="hidden" name="pin" value="${ADMIN_PIN}">
-                        <input type="hidden" name="systemAction" value="shutdown">
-                        <button type="submit" class="btn-stop">🔴 完全シャットダウン</button>
-                    </form>
-                </div>
-
-                <h3 style="margin-top: 20px;">🎮 ステータス・オンライン状態変更</h3>
+                <h3>🎮 ステータス・オンライン状態変更</h3>
                 <form action="/admin" method="POST" style="display:flex; gap:8px; margin-bottom:12px;">
                     <input type="hidden" name="pin" value="${ADMIN_PIN}">
                     <input type="text" name="newActivity" placeholder="新しいステータス文字を入力" required>
@@ -396,20 +330,6 @@ const commands = [
         .setDescription('このサーバーの自動返信チャンネルや詳細なステータスを確認しよー！')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     new SlashCommandBuilder()
-        .setName('botモード')
-        .setDescription('Botの状態（通常・点検中・停止）を切り替えるぜ☆')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-        .addStringOption(option =>
-            option.setName('モード')
-                .setDescription('切り替えるモード')
-                .setRequired(true)
-                .addChoices(
-                    { name: '通常 (normal)', value: 'normal' },
-                    { name: '点検中 (maintenance)', value: 'maintenance' },
-                    { name: '停止 (stopped)', value: 'stopped' }
-                )
-        ),
-    new SlashCommandBuilder()
         .setName('ステータス')
         .setDescription('Botのプロフィール表示（プレイ中やオンライン状態）を変更するぜ☆')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -445,9 +365,8 @@ const commands = [
 
 client.once('ready', async () => {
     console.log(`${client.user.tag} がスマホモードでログインしたぜ！`);
-    console.log(`登録メッセージ総数: ${messages.length}個 / 登録コマンド数: ${commands.length}個`);
+    console.log(`登録メッセージ総数: ${messages.length}個`);
 
-    // 起動時の初期ステータス＆スマホマーク設定を確実に適用
     client.user.setPresence({
         activities: [{ name: currentActivityText, type: ActivityType.Playing }],
         status: currentOnlineStatus
@@ -467,7 +386,7 @@ client.once('ready', async () => {
 
 client.on('guildCreate', guild => {
     stats.totalAuthCount++;
-    console.log(`新しいサーバーに導入されました: ${guild.name} (累計認証回数: ${stats.totalAuthCount})`);
+    console.log(`新しいサーバーに導入されました: ${guild.name}`);
 });
 
 client.on('interactionCreate', async interaction => {
@@ -507,8 +426,6 @@ client.on('interactionCreate', async interaction => {
     else if (commandName === '今どんなかんじ') {
         const memory = process.memoryUsage();
         const ramUsageMB = (memory.rss / 1024 / 1024).toFixed(2);
-        const heapUsedMB = (memory.heapUsed / 1024 / 1024).toFixed(2);
-        const heapTotalMB = (memory.heapTotal / 1024 / 1024).toFixed(2);
         
         const uptimeSec = Math.floor((Date.now() - stats.startTime) / 1000);
         const hours = Math.floor(uptimeSec / 3600);
@@ -517,45 +434,20 @@ client.on('interactionCreate', async interaction => {
         const guildCount = client.guilds.cache.size;
         const userCount = client.guilds.cache.reduce((acc, g) => acc + g.memberCount, 0);
 
-        const activeChannels = [];
-        for (const [id, setting] of channelSettings.entries()) {
-            if (setting.enabled && guild.channels.cache.has(id)) {
-                activeChannels.push(`・<#${id}> （${setting.probability}%）`);
-            }
-        }
-
         const embed = new EmbedBuilder()
             .setColor(0x00FF7F)
-            .setTitle('📊 しゅんAIBOTの超詳細ステータスだぜ☆')
+            .setTitle('📊 しゅんAIBOTのステータスだぜ☆')
             .addFields(
-                { name: '🌐 動作モード', value: `\`${botStatusMode}\``, inline: true },
                 { name: '📶 応答速度 (Ping)', value: `${client.ws.ping} ms`, inline: true },
                 { name: '⏱️ 連続稼働時間', value: `${hours}時間 ${mins}分`, inline: true },
-                { name: '🔗 累計Bot認証回数', value: `${stats.totalAuthCount} 回`, inline: true },
-                { name: '⚡ コマンド数', value: `${commands.length} 個`, inline: true },
-                { name: '🏰 現在の導入サーバー数', value: `${guildCount} サーバー`, inline: true },
+                { name: '🏰 導入サーバー数', value: `${guildCount} サーバー`, inline: true },
                 { name: '👥 合計ユーザー数', value: `${userCount} 人`, inline: true },
                 { name: '📝 登録セリフ数', value: `${messages.length} 個`, inline: true },
                 { name: '💬 総送信数', value: `${stats.totalSentMessages} 件`, inline: true },
-                { name: '📩 総受信数', value: `${stats.totalReceivedMessages} 件`, inline: true },
-                { name: '⚡ コマンド実行数', value: `${stats.totalCommandsExecuted} 回`, inline: true },
-                { name: '💻 RAM使用量 (RSS)', value: `${ramUsageMB} MB`, inline: true },
-                { name: '🖥️ 実行環境', value: `Node ${process.version}`, inline: true },
-                { name: '🎮 表示ステータス', value: `\`${currentActivityText}\``, inline: false },
-                { name: '⚙️ 自動返信有効チャンネル', value: activeChannels.length > 0 ? activeChannels.join('\n') : 'なし（メンションか返信で反応するよ）' }
+                { name: '🎮 表示ステータス', value: `\`${currentActivityText}\``, inline: false }
             );
 
         await interaction.reply({ embeds: [embed] });
-    }
-    else if (commandName === 'botモード') {
-        const newMode = interaction.options.getString('モード');
-        botStatusMode = newMode;
-        
-        let modeText = '通常モード';
-        if (newMode === 'maintenance') modeText = '点検中モード（自動返信停止中）';
-        if (newMode === 'stopped') modeText = '完全停止モード（すべて無視）';
-
-        await interaction.reply(`⚙️ Botのモードを **${modeText}** に切り替えたぜ！`);
     }
     else if (commandName === 'ステータス') {
         const text = interaction.options.getString('内容');
@@ -589,8 +481,6 @@ client.on('messageCreate', async message => {
 
     stats.totalReceivedMessages++;
 
-    if (botStatusMode === 'stopped') return;
-
     const isMentioned = message.mentions.has(client.user);
 
     let isReplyToBot = false;
@@ -602,8 +492,6 @@ client.on('messageCreate', async message => {
             }
         } catch (err) {}
     }
-
-    if (botStatusMode === 'maintenance' && !isMentioned && !isReplyToBot) return;
 
     const setting = channelSettings.get(message.channel.id);
     let shouldReply = false;
