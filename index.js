@@ -1,5 +1,5 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActivityType } = require('discord.js');
-const { GoogleGenAI } = require('@google/genai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const express = require('express');
 const os = require('os');
 
@@ -46,7 +46,7 @@ console.error = (...args) => {
 };
 
 // Google Gemini APIクライアント初期化
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // UptimeRobot用
 app.get('/ping', (req, res) => {
@@ -409,7 +409,7 @@ client.on('interactionCreate', async interaction => {
             await interaction.reply(`自動返信ONにして、このチャンネルの反応確率を **${prob}%** に設定したぜ☆`);
         } else {
             current.probability = prob;
-            channelSettings.set(channelId, channelSettings.get(channelId));
+            channelSettings.set(channelId, current);
             await interaction.reply(`このチャンネルの反応確率を **${prob}%** に変更したぜ☆`);
         }
     } 
@@ -463,17 +463,17 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// Gemini APIを使って返信を生成する関数
+// Gemini APIを使って返信を生成する関数（@google/generative-ai 対応）
 async function getGeminiReply(userMessage) {
     try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: userMessage,
-            config: {
-                systemInstruction: 'あなたは「しゅんAIBOT」という名前の明るくフレンドリーなDiscordボットです。口調は「〜だぜ☆」「〜だよ！」など元気で親しみやすく、ちくわが大好きです。回答は短く簡潔に、Discordのチャットらしく返してください。',
-            }
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-1.5-flash',
+            systemInstruction: 'あなたは「しゅんAIBOT」という名前の明るくフレンドリーなDiscordボットです。口調は「〜だぜ☆」「〜だよ！」など元気で親しみやすく、ちくわが大好きです。回答は短く簡潔に、Discordのチャットらしく返してください。'
         });
-        return response.text ? response.text.trim() : 'あれ、うまく言葉が出てこないや…！';
+
+        const result = await model.generateContent(userMessage);
+        const response = await result.response;
+        return response.text() ? response.text().trim() : 'あれ、うまく言葉が出てこないや…！';
     } catch (error) {
         console.error('Gemini APIエラー:', error);
         return 'うーん、ちょっと頭がボーッとしちゃった☆（APIエラー）';
