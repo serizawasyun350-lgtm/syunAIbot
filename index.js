@@ -1,6 +1,6 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActivityType } = require('discord.js');
 const express = require('express');
-const messages = require('./messages'); // さっき作った10万個のセリフを読み込む
+const messages = require('./messages'); // 10万個のセリフファイル
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -492,8 +492,11 @@ client.on('messageCreate', async message => {
     if (shouldReply) {
         await message.channel.sendTyping();
 
-        // 10万個の中からランダムに1つ選ぶ
+        // 配列が空でないか、要素が有効かチェックして安全にランダム取得
+        if (!messages || messages.length === 0) return;
         const randomMsg = messages[Math.floor(Math.random() * messages.length)];
+        
+        if (!randomMsg || typeof randomMsg !== 'string' || randomMsg.trim() === '') return;
 
         await message.reply(randomMsg);
         stats.totalSentMessages++;
