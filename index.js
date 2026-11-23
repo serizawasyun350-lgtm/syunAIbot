@@ -426,7 +426,7 @@ client.on('interactionCreate', async interaction => {
                 { name: '🏰 導入サーバー数', value: `${guildCount} サーバー`, inline: true },
                 { name: '👥 合計ユーザー数', value: `${userCount} 人`, inline: true },
                 { name: '💬 総送信数', value: `${stats.totalSentMessages} 件`, inline: true },
-                { name: '🤖 モード', value: '10万個のランダムセリフ', inline: true },
+                { name: '🤖 モード', value: '10万個のランダムセリフ (挨拶付き)', inline: true },
                 { name: '🎮 表示ステータス', value: `\`${currentActivityText}\``, inline: false }
             );
 
@@ -459,7 +459,7 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// メッセージ受信時の自動ランダム返信処理
+// メッセージ受信時の自動ランダム返信処理（挨拶を必ず先頭につける）
 client.on('messageCreate', async message => {
     if (message.author.bot || !message.guild) return;
 
@@ -492,13 +492,26 @@ client.on('messageCreate', async message => {
     if (shouldReply) {
         await message.channel.sendTyping();
 
-        // 配列が空でないか、要素が有効かチェックして安全にランダム取得
         if (!messages || messages.length === 0) return;
         const randomMsg = messages[Math.floor(Math.random() * messages.length)];
         
         if (!randomMsg || typeof randomMsg !== 'string' || randomMsg.trim() === '') return;
 
-        await message.reply(randomMsg);
+        // 挨拶のバリエーション（ここからランダムで1つ選ばれます）
+        const greetings = [
+            'こんにちは！',
+            'やっほー！',
+            'お疲れ様！',
+            'おっ、',
+            'やあ！',
+            'こんにちはだよ！'
+        ];
+        const selectedGreeting = greetings[Math.floor(Math.random() * greetings.length)];
+
+        // 挨拶 ＋ ランダムメッセージ を組み合わせて送信！
+        const finalReply = `${selectedGreeting} ${randomMsg}`;
+
+        await message.reply(finalReply);
         stats.totalSentMessages++;
     }
 });
