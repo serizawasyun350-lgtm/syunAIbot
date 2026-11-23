@@ -45,7 +45,7 @@ console.error = (...args) => {
     captureLog('ERROR', args);
 };
 
-// Google Gemini APIクライアント初期化（GEMINI_API_KEYを使用）
+// Google Gemini APIクライアント初期化
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // UptimeRobot用
@@ -269,7 +269,7 @@ app.post('/admin', (req, res) => {
 
 app.listen(port, () => console.log(`Webサーバー起動 (Port: ${port})`));
 
-// Discordクライアント設定（スマホAndroidオンラインマーク設定）
+// Discordクライアント設定
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -409,7 +409,7 @@ client.on('interactionCreate', async interaction => {
             await interaction.reply(`自動返信ONにして、このチャンネルの反応確率を **${prob}%** に設定したぜ☆`);
         } else {
             current.probability = prob;
-            channelSettings.set(channelId, current);
+            channelSettings.set(channelId, channelSettings.get(channelId));
             await interaction.reply(`このチャンネルの反応確率を **${prob}%** に変更したぜ☆`);
         }
     } 
