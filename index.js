@@ -1,7 +1,6 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActivityType } = require('discord.js');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 const express = require('express');
-const os = require('os');
+const messages = require('./messages'); // さっき作った10万個のセリフを読み込む
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -20,7 +19,7 @@ let stats = {
 };
 
 const channelSettings = new Map();
-let currentActivityText = 'Geminiとおしゃべり中☆';
+let currentActivityText = 'みんなとおしゃべり中☆';
 let currentOnlineStatus = 'online';
 
 // リアルタイムコンソールログ
@@ -44,9 +43,6 @@ console.error = (...args) => {
     originalError(...args);
     captureLog('ERROR', args);
 };
-
-// Google Gemini APIクライアント初期化
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // UptimeRobot用
 app.get('/ping', (req, res) => {
@@ -430,7 +426,7 @@ client.on('interactionCreate', async interaction => {
                 { name: '🏰 導入サーバー数', value: `${guildCount} サーバー`, inline: true },
                 { name: '👥 合計ユーザー数', value: `${userCount} 人`, inline: true },
                 { name: '💬 総送信数', value: `${stats.totalSentMessages} 件`, inline: true },
-                { name: '🤖 AIエンジン', value: 'Google Gemini API', inline: true },
+                { name: '🤖 モード', value: '10万個のランダムセリフ', inline: true },
                 { name: '🎮 表示ステータス', value: `\`${currentActivityText}\``, inline: false }
             );
 
@@ -463,23 +459,7 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// Gemini APIを使って返信を生成する関数（@google/generative-ai 対応）
-async function getGeminiReply(userMessage) {
-    try {
-        const model = genAI.getGenerativeModel({
-            model: 'gemini-1.5-flash',
-            systemInstruction: 'あなたは「しゅんAIBOT」という名前の明るくフレンドリーなDiscordボットです。口調は「〜だぜ☆」「〜だよ！」など元気で親しみやすく、ちくわが大好きです。回答は短く簡潔に、Discordのチャットらしく返してください。'
-        });
-
-        const result = await model.generateContent(userMessage);
-        const response = await result.response;
-        return response.text() ? response.text().trim() : 'あれ、うまく言葉が出てこないや…！';
-    } catch (error) {
-        console.error('Gemini APIエラー:', error);
-        return 'うーん、ちょっと頭がボーッとしちゃった☆（APIエラー）';
-    }
-}
-
+// メッセージ受信時の自動ランダム返信処理
 client.on('messageCreate', async message => {
     if (message.author.bot || !message.guild) return;
 
@@ -512,12 +492,10 @@ client.on('messageCreate', async message => {
     if (shouldReply) {
         await message.channel.sendTyping();
 
-        const cleanContent = message.content.replace(/<@!?\d+>/g, '').trim();
-        const prompt = cleanContent.length > 0 ? cleanContent : 'やっほー！';
+        // 10万個の中からランダムに1つ選ぶ
+        const randomMsg = messages[Math.floor(Math.random() * messages.length)];
 
-        const aiReply = await getGeminiReply(prompt);
-
-        await message.reply(aiReply);
+        await message.reply(randomMsg);
         stats.totalSentMessages++;
     }
 });
