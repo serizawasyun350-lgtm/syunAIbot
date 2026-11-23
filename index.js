@@ -1,7 +1,7 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActivityType } = require('discord.js');
+const { GoogleGenAI } = require('@google/genai');
 const express = require('express');
 const os = require('os');
-const messages = require('./messages');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -20,7 +20,7 @@ let stats = {
 };
 
 const channelSettings = new Map();
-let currentActivityText = 'ちくわを食べながら待機中☆';
+let currentActivityText = 'Geminiとおしゃべり中☆';
 let currentOnlineStatus = 'online';
 
 // リアルタイムコンソールログ
@@ -45,7 +45,10 @@ console.error = (...args) => {
     captureLog('ERROR', args);
 };
 
-// 監視用ルート
+// Google Gemini APIクライアント初期化（GEMINI_API_KEYを使用）
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+// UptimeRobot用
 app.get('/ping', (req, res) => {
     res.status(200).send('OK');
 });
@@ -88,7 +91,6 @@ app.get('/api/stats', (req, res) => {
         commandCount: commands.length,
         guildCount,
         userCount,
-        messagePoolSize: messages.length,
         rssMB: (memoryUsage.rss / 1024 / 1024).toFixed(2),
         activeChannelsCount: channelSettings.size,
         logs: consoleLogs.slice(0, 30).join('\n')
@@ -354,7 +356,6 @@ const commands = [
 
 client.once('ready', async () => {
     console.log(`${client.user.tag} がスマホモードでログインしたぜ！`);
-    console.log(`登録メッセージ総数: ${messages.length}個`);
 
     client.user.setPresence({
         activities: [{ name: currentActivityText, type: ActivityType.Playing }],
@@ -428,8 +429,8 @@ client.on('interactionCreate', async interaction => {
                 { name: '⏱️ 連続稼働時間', value: `${hours}時間 ${mins}分`, inline: true },
                 { name: '🏰 導入サーバー数', value: `${guildCount} サーバー`, inline: true },
                 { name: '👥 合計ユーザー数', value: `${userCount} 人`, inline: true },
-                { name: '📝 登録セリフ数', value: `${messages.length} 個`, inline: true },
                 { name: '💬 総送信数', value: `${stats.totalSentMessages} 件`, inline: true },
+                { name: '🤖 AIエンジン', value: 'Google Gemini API', inline: true },
                 { name: '🎮 表示ステータス', value: `\`${currentActivityText}\``, inline: false }
             );
 
@@ -462,32 +463,21 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// 挨拶の判定と専用返事を返す関数
-function getGreetingReply(content) {
-    const text = content.trim();
-    if (/おはよう|おはよー|おはよ/.test(text)) {
-        const list = ['おはよう！今日も一日がんばろーぜ☆', 'おはよー！朝ごはんにちくわ食べた？', 'ふわぁ…おはよう！よく眠れた？'];
-        return list[Math.floor(Math.random() * list.length)];
+// Gemini APIを使って返信を生成する関数
+async function getGeminiReply(userMessage) {
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: userMessage,
+            config: {
+                systemInstruction: 'あなたは「しゅんAIBOT」という名前の明るくフレンドリーなDiscordボットです。口調は「〜だぜ☆」「〜だよ！」など元気で親しみやすく、ちくわが大好きです。回答は短く簡潔に、Discordのチャットらしく返してください。',
+            }
+        });
+        return response.text ? response.text.trim() : 'あれ、うまく言葉が出てこないや…！';
+    } catch (error) {
+        console.error('Gemini APIエラー:', error);
+        return 'うーん、ちょっと頭がボーッとしちゃった☆（APIエラー）';
     }
-    if (/こんにちは|こんちゃ|ちわ|やっほー|ハロー/.test(text)) {
-        const list = ['こんにちはー！元気にしてた？☆', 'やっほー！今日もいい天気だな〜', 'こんちゃ！ちくわ食べる？'];
-        return list[Math.floor(Math.random() * list.length)];
-    }
-    if (/こんばんは|こんばんわ|ばんは/.test(text)) {
-        const list = ['こんばんはー！今日もお疲れさま☆', 'こんばんわ！夜ふかししすぎんなよー？', 'こんばんは！夜食にちくわどう？'];
-        return list[Math.floor(Math.random() * list.length)];
-    }
-    if (/おやすみ|おやすみなさい|寝るわ|ねむい/.test(text)) {
-        const list = ['おやすみー！いい夢見ろよな☆', 'おやすみなさい！また明日な〜', 'おやすみ！ちくわの夢見ろよｗ'];
-        return list[Math.floor(Math.random() * list.length)];
-    }
-    if (/よろしく|はじめまして/.test(text)) {
-        return 'よろしくなー！しゅんAIBOTだぜ☆ 仲良くしよー！';
-    }
-    if (/ありがとう|ありがと|あざす/.test(text)) {
-        return 'どういたしましてだぜ☆ いつでも頼ってくれよな！';
-    }
-    return null;
 }
 
 client.on('messageCreate', async message => {
@@ -508,32 +498,26 @@ client.on('messageCreate', async message => {
     }
 
     const setting = channelSettings.get(message.channel.id);
-    const greetingReply = getGreetingReply(message.content);
-
     let shouldReply = false;
-    let replyText = null;
 
     if (isMentioned || isReplyToBot) {
         shouldReply = true;
-        replyText = greetingReply || messages[Math.floor(Math.random() * messages.length)];
     } else if (setting && setting.enabled) {
         const roll = Math.random() * 100;
         if (roll < setting.probability) {
             shouldReply = true;
-            replyText = greetingReply || messages[Math.floor(Math.random() * messages.length)];
         }
-    } else if (greetingReply) {
-        shouldReply = true;
-        replyText = greetingReply;
     }
 
-    if (shouldReply && replyText) {
+    if (shouldReply) {
         await message.channel.sendTyping();
-        
-        const delay = Math.floor(Math.random() * 700) + 800;
-        await new Promise(resolve => setTimeout(resolve, delay));
 
-        await message.reply(replyText);
+        const cleanContent = message.content.replace(/<@!?\d+>/g, '').trim();
+        const prompt = cleanContent.length > 0 ? cleanContent : 'やっほー！';
+
+        const aiReply = await getGeminiReply(prompt);
+
+        await message.reply(aiReply);
         stats.totalSentMessages++;
     }
 });
